@@ -659,41 +659,9 @@ func (c *Client) genRequest(ctx context.Context, in []*schema.Message, opts ...m
 		}
 	}
 
-	if options.ToolChoice != nil {
-		/*
-			tool_choice is string or object
-			Controls which (if any) tool is called by the model.
-			"none" means the model will not call any tool and instead generates a message.
-			"auto" means the model can pick between generating a message or calling one or more tools.
-			"required" means the model must call one or more tools.
-
-			Specifying a particular tool via {"type": "function", "function": {"name": "my_function"}} forces the model to call that tool.
-
-			"none" is the default when no tools are present.
-			"auto" is the default if tools are present.
-		*/
-
-		switch *options.ToolChoice {
-		case schema.ToolChoiceForbidden:
-			req.ToolChoice = toolChoiceNone
-		case schema.ToolChoiceAllowed:
-			req.ToolChoice = toolChoiceAuto
-		case schema.ToolChoiceForced:
-			if len(req.Tools) == 0 {
-				return nil, nil, nil, nil, fmt.Errorf("tool choice is forced but tool is not provided")
-			} else if len(req.Tools) > 1 {
-				req.ToolChoice = toolChoiceRequired
-			} else {
-				req.ToolChoice = openai.ToolChoice{
-					Type: req.Tools[0].Type,
-					Function: openai.ToolFunction{
-						Name: req.Tools[0].Function.Name,
-					},
-				}
-			}
-		default:
-			return nil, nil, nil, nil, fmt.Errorf("tool choice=%s not support", *options.ToolChoice)
-		}
+	err := populateToolChoice(req, options)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
 
 	msgs := make([]openai.ChatCompletionMessage, 0, len(in))
@@ -999,6 +967,97 @@ func (c *Client) Stream(ctx context.Context, in []*schema.Message,
 	)
 
 	return outStream, nil
+}
+
+type allowedTools struct {
+	Mode  string              `json:"mode"`
+	Tools []openai.ToolChoice `json:"tools"`
+}
+
+func populateToolChoice(req *openai.ChatCompletionRequest, options *model.Options) error {
+	if options.ToolChoice == nil {
+		return nil
+	}
+
+	if len(req.Tools) == 0 && len(options.AllowedTools) > 0 {
+		return fmt.Errorf("tools must be provided when allowed_tools is set")
+	}
+
+	validateAllowedTools := func() error {
+		if len(options.AllowedTools) > 0 {
+			toolsMap := make(map[string]bool)
+			for _, t := range req.Tools {
+				toolsMap[t.Function.Name] = true
+			}
+			for _, name := range options.AllowedTools {
+				if !toolsMap[name] {
+					return fmt.Errorf("allowed tool %s not found in request tools", name)
+				}
+			}
+		}
+		return nil
+	}
+
+	buildToolChoices := func() []openai.ToolChoice {
+		choices := make([]openai.ToolChoice, len(options.AllowedTools))
+		for i, n := range options.AllowedTools {
+			choices[i] = openai.ToolChoice{
+				Type: openai.ToolTypeFunction,
+				Function: openai.ToolFunction{
+					Name: n,
+				},
+			}
+		}
+		return choices
+	}
+
+	switch *options.ToolChoice {
+	case schema.ToolChoiceForbidden:
+		req.ToolChoice = toolChoiceNone
+		return nil
+	case schema.ToolChoiceAllowed:
+		if len(options.AllowedTools) > 0 {
+			if err := validateAllowedTools(); err != nil {
+				return err
+			}
+			req.ToolChoice = allowedTools{
+				Mode:  toolChoiceAuto,
+				Tools: buildToolChoices(),
+			}
+		} else {
+			req.ToolChoice = toolChoiceAuto
+		}
+		return nil
+	case schema.ToolChoiceForced:
+		if len(req.Tools) == 0 {
+			return fmt.Errorf("tool_choice is forced but no tools are provided")
+		}
+
+		if len(req.Tools) == 1 && len(options.AllowedTools) == 0 {
+			req.ToolChoice = openai.ToolChoice{
+				Type: openai.ToolTypeFunction,
+				Function: openai.ToolFunction{
+					Name: req.Tools[0].Function.Name,
+				},
+			}
+			return nil
+		}
+		
+		if len(options.AllowedTools) > 0 {
+			if err := validateAllowedTools(); err != nil {
+				return err
+			}
+			req.ToolChoice = allowedTools{
+				Mode:  toolChoiceRequired,
+				Tools: buildToolChoices(),
+			}
+		} else {
+			req.ToolChoice = toolChoiceRequired
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported tool_choice: %s", *options.ToolChoice)
+	}
 }
 
 func toStreamProbs(probs *openai.ChatCompletionStreamChoiceLogprobs) *schema.LogProbs {

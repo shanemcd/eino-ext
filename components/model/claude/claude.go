@@ -566,38 +566,56 @@ func (cm *ChatModel) populateTools(params *anthropic.MessageNewParams, commonOpt
 
 	params.Tools = tools
 
-	if commonOptions.ToolChoice != nil {
-		switch *commonOptions.ToolChoice {
-		case schema.ToolChoiceForbidden:
-			params.Tools = []anthropic.ToolUnionParam{} // act like forbid tools
-		case schema.ToolChoiceAllowed:
-			p := &anthropic.ToolChoiceAutoParam{}
-			if specOptions.DisableParallelToolUse != nil {
-				p.DisableParallelToolUse = param.NewOpt[bool](*specOptions.DisableParallelToolUse)
+	err := populateToolChoice(params, commonOptions, specOptions.DisableParallelToolUse)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func populateToolChoice(params *anthropic.MessageNewParams, options *model.Options, disableParallelToolUse *bool) error {
+	if options.ToolChoice == nil {
+		return nil
+	}
+
+	if len(options.AllowedTools) > 0 {
+		return fmt.Errorf("claude not support allowed tools")
+	}
+
+	switch *options.ToolChoice {
+	case schema.ToolChoiceForbidden:
+		ofNone := anthropic.NewToolChoiceNoneParam()
+		params.ToolChoice = anthropic.ToolChoiceUnionParam{
+			OfNone: &ofNone,
+		}
+	case schema.ToolChoiceAllowed:
+		ofAuto := &anthropic.ToolChoiceAutoParam{}
+		if disableParallelToolUse != nil {
+			ofAuto.DisableParallelToolUse = param.NewOpt[bool](*disableParallelToolUse)
+		}
+		params.ToolChoice = anthropic.ToolChoiceUnionParam{
+			OfAuto: ofAuto,
+		}
+	case schema.ToolChoiceForced:
+		if len(params.Tools) == 0 {
+			return fmt.Errorf("tool choice is forced but tool is not provided")
+		} else if len(params.Tools) == 1 {
+			params.ToolChoice = anthropic.ToolChoiceParamOfTool(*params.Tools[0].GetName())
+		} else {
+			ofAny := &anthropic.ToolChoiceAnyParam{}
+			if disableParallelToolUse != nil {
+				ofAny.DisableParallelToolUse = param.NewOpt[bool](*disableParallelToolUse)
 			}
 			params.ToolChoice = anthropic.ToolChoiceUnionParam{
-				OfAuto: p,
+				OfAny: ofAny,
 			}
-		case schema.ToolChoiceForced:
-			if len(tools) == 0 {
-				return fmt.Errorf("tool choice is forced but tool is not provided")
-			} else if len(tools) == 1 {
-				params.ToolChoice = anthropic.ToolChoiceParamOfTool(*tools[0].GetName())
-			} else {
-				p := &anthropic.ToolChoiceAnyParam{}
-				if specOptions.DisableParallelToolUse != nil {
-					p.DisableParallelToolUse = param.NewOpt[bool](*specOptions.DisableParallelToolUse)
-				}
-				params.ToolChoice = anthropic.ToolChoiceUnionParam{
-					OfAny: p,
-				}
-			}
-		default:
-			return fmt.Errorf("tool choice=%s not support", *commonOptions.ToolChoice)
 		}
+	default:
+		return fmt.Errorf("tool choice=%s not support", *options.ToolChoice)
 	}
 
 	return nil
+
 }
 
 func (cm *ChatModel) getCallbackInput(input []*schema.Message, opts ...model.Option) *model.CallbackInput {
