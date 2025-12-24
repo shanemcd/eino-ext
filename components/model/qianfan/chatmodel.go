@@ -386,32 +386,47 @@ func (cm *ChatModel) genRequest(input []*schema.Message, isStream bool, opts ...
 	if isStream {
 		req.StreamOptions = &qianfan.StreamOptions{IncludeUsage: true}
 	}
-
-	if options.ToolChoice != nil {
-		switch *options.ToolChoice {
-		case schema.ToolChoiceForbidden:
-			req.ToolChoice = toolChoiceNone
-		case schema.ToolChoiceAllowed:
-			req.ToolChoice = toolChoiceAuto
-		case schema.ToolChoiceForced:
-			if len(req.Tools) == 0 {
-				return nil, nil, fmt.Errorf("[qianfan][genRequest] tool choice is forced but tool is not provided")
-			} else if len(req.Tools) > 1 {
-				req.ToolChoice = toolChoiceRequired
-			} else {
-				req.ToolChoice = qianfan.ToolChoice{
-					Type: "function",
-					Function: &qianfan.Function{
-						Name: req.Tools[0].Function.Name,
-					},
-				}
-			}
-		default:
-			return nil, nil, fmt.Errorf("[qianfan][genRequest] tool choice=%s not support", *options.ToolChoice)
-		}
+	
+	err = populateToolChoice(req, options)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return req, cbInput, nil
+}
+
+func populateToolChoice(req *qianfan.ChatCompletionV2Request, options *model.Options) error {
+	if options.ToolChoice == nil {
+		return nil
+	}
+
+	if len(options.AllowedTools) > 0 {
+		return fmt.Errorf("not support allowed tools parameter")
+	}
+
+	switch *options.ToolChoice {
+	case schema.ToolChoiceForbidden:
+		req.ToolChoice = toolChoiceNone
+	case schema.ToolChoiceAllowed:
+		req.ToolChoice = toolChoiceAuto
+	case schema.ToolChoiceForced:
+		if len(req.Tools) == 0 {
+			return fmt.Errorf("[qianfan][genRequest] tool choice is forced but tool is not provided")
+		} else if len(req.Tools) > 1 {
+			req.ToolChoice = toolChoiceRequired
+		} else {
+			req.ToolChoice = qianfan.ToolChoice{
+				Type: "function",
+				Function: &qianfan.Function{
+					Name: req.Tools[0].Function.Name,
+				},
+			}
+		}
+	default:
+		return fmt.Errorf("[qianfan][genRequest] tool choice=%s not support", *options.ToolChoice)
+	}
+
+	return nil
 }
 
 func toQianfanMultiModalMessages(input []*schema.Message) ([]chatCompletionV3Message, error) {

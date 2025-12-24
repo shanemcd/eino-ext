@@ -36,8 +36,8 @@ import (
 )
 
 type responsesAPIChatModel struct {
-	client *arkruntime.Client
-	//tools      []*responses.ResponsesTool
+	client     *arkruntime.Client
+	tools      []*responses.ResponsesTool
 	rawTools   []*schema.ToolInfo
 	toolChoice *schema.ToolChoice
 
@@ -320,7 +320,7 @@ func (cm *responsesAPIChatModel) genRequestAndOptions(in []*schema.Message, opti
 		return nil, err
 	}
 
-	err = cm.populateTools(responseReq, options.Tools, options.ToolChoice)
+	err = cm.populateTools(responseReq, options)
 	if err != nil {
 		return nil, err
 	}
@@ -495,28 +495,31 @@ func (cm *responsesAPIChatModel) populateTools(responseReq *responses.ResponsesR
 	if responseReq.PreviousResponseId != nil {
 		return nil
 	}
-	var tools []*responses.ResponsesTool
+	tools := cm.tools
 	if options.Tools != nil {
 		var err error
 		if tools, err = cm.toTools(options.Tools); err != nil {
 			return err
 		}
 	}
-	responseReq.Tools = tools
-	err := cm.populateToolChoice(responseReq, toolChoice, optTools)
+
+	err := cm.populateToolChoice(responseReq, options, tools)
 	if err != nil {
 		return err
 	}
 
+	responseReq.Tools = tools
 	return nil
 }
 
-func (cm *responsesAPIChatModel) populateToolChoice(responseReq *responses.ResponsesRequest, toolChoice *schema.ToolChoice, tools []*schema.ToolInfo) error {
-	if toolChoice == nil {
+func (cm *responsesAPIChatModel) populateToolChoice(responseReq *responses.ResponsesRequest, options *model.Options, tools []*responses.ResponsesTool) error {
+	tc := options.ToolChoice
+	if tc == nil {
 		return nil
 	}
+
 	var mode responses.ToolChoiceMode_Enum
-	switch *toolChoice {
+	switch *tc {
 	case schema.ToolChoiceForbidden:
 		mode = responses.ToolChoiceMode_none
 	case schema.ToolChoiceAllowed:
@@ -531,16 +534,29 @@ func (cm *responsesAPIChatModel) populateToolChoice(responseReq *responses.Respo
 		return fmt.Errorf("tool_choice is forced but no tools are provided")
 	}
 
-	if mode == responses.ToolChoiceMode_required && len(tools) == 1 {
-		responseReq.ToolChoice = &responses.ResponsesToolChoice{
-			Union: &responses.ResponsesToolChoice_FunctionToolChoice{
-				FunctionToolChoice: &responses.FunctionToolChoice{
-					Type: responses.ToolType_function,
-					Name: tools[0].Name,
-				},
-			},
+	if mode == responses.ToolChoiceMode_required {
+		var onlyOneToolName string
+		if len(options.AllowedToolNames) > 0 {
+			if len(options.AllowedToolNames) > 1 {
+				return fmt.Errorf("only one allowed tool name can be configured")
+			}
+
+			onlyOneToolName = options.AllowedToolNames[0]
+		} else if len(tools) == 1 && tools[0].GetToolFunction() != nil {
+			onlyOneToolName = tools[0].GetToolFunction().GetName()
 		}
-		return nil
+
+		if onlyOneToolName != "" {
+			responseReq.ToolChoice = &responses.ResponsesToolChoice{
+				Union: &responses.ResponsesToolChoice_FunctionToolChoice{
+					FunctionToolChoice: &responses.FunctionToolChoice{
+						Type: responses.ToolType_function,
+						Name: onlyOneToolName,
+					},
+				},
+			}
+			return nil
+		}
 
 	}
 
@@ -553,7 +569,6 @@ func (cm *responsesAPIChatModel) populateToolChoice(responseReq *responses.Respo
 	return nil
 
 }
-
 func (cm *responsesAPIChatModel) toArkUserRoleItemInputMessage(msg *schema.Message) (*responses.ItemInputMessage, error) {
 	inputItemMessage := &responses.ItemInputMessage{
 		Type: responses.ItemType_message.Enum(),
@@ -700,7 +715,6 @@ func (cm *responsesAPIChatModel) getOptions(opts []model.Option) (*model.Options
 		Model:       &cm.model,
 		TopP:        cm.topP,
 		ToolChoice:  cm.toolChoice,
-		Tools:       cm.rawTools,
 	}, opts...)
 
 	arkOpts := model.GetImplSpecificOptions(&arkOptions{
@@ -1349,7 +1363,7 @@ func (cm *responsesAPIChatModel) createPrefixCacheByResponseAPI(ctx context.Cont
 		return nil, err
 	}
 
-	err = cm.populateTools(responseReq, options.Tools, options.ToolChoice)
+	err = cm.populateTools(responseReq, options)
 	if err != nil {
 		return nil, err
 	}

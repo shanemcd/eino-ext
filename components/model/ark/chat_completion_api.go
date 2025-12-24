@@ -305,6 +305,7 @@ func populateChatMsgReasoningContent(in *schema.Message, msg *model.ChatCompleti
 }
 
 func (cm *completionAPIChatModel) genRequest(in []*schema.Message, options *fmodel.Options, arkOpts *arkOptions) (req *model.CreateChatCompletionRequest, err error) {
+
 	req = &model.CreateChatCompletionRequest{
 		MaxTokens:           options.MaxTokens,
 		Temperature:         options.Temperature,
@@ -362,7 +363,6 @@ func (cm *completionAPIChatModel) genRequest(in []*schema.Message, options *fmod
 
 	if tools != nil {
 		req.Tools = make([]*model.Tool, 0, len(tools))
-
 		for _, tool := range tools {
 			arkTool := &model.Tool{
 				Type: model.ToolTypeFunction,
@@ -377,22 +377,62 @@ func (cm *completionAPIChatModel) genRequest(in []*schema.Message, options *fmod
 		}
 	}
 
-	if options.ToolChoice != nil {
-		var tc toolChoice
-		switch *options.ToolChoice {
-		case schema.ToolChoiceForbidden:
-			tc = toolChoiceNone
-		case schema.ToolChoiceAllowed:
-			tc = toolChoiceAuto
-		case schema.ToolChoiceForced:
-			tc = toolChoiceRequired
-		default:
-			tc = toolChoiceAuto
-		}
-		req.ToolChoice = tc
+	err = cm.populateToolChoice(req, options, tools)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
+}
+
+func (cm *completionAPIChatModel) populateToolChoice(req *model.CreateChatCompletionRequest, options *fmodel.Options, tools []tool) error {
+	if options.ToolChoice == nil {
+		return nil
+	}
+
+	var tc toolChoice
+	switch *options.ToolChoice {
+	case schema.ToolChoiceForbidden:
+		tc = toolChoiceNone
+	case schema.ToolChoiceAllowed:
+		tc = toolChoiceAuto
+	case schema.ToolChoiceForced:
+		tc = toolChoiceRequired
+	default:
+		tc = toolChoiceAuto
+	}
+
+	if tc == toolChoiceRequired && len(tools) == 0 {
+		return fmt.Errorf("too many tool choices specified")
+	}
+
+	if tc == toolChoiceRequired {
+		var onlyOneToolName = ""
+		if len(options.AllowedToolNames) > 0 {
+			if len(options.AllowedToolNames) > 1 {
+				return fmt.Errorf("only one allowed tool name can be configured")
+			}
+			onlyOneToolName = options.AllowedToolNames[0]
+		} else if len(tools) == 1 {
+			onlyOneToolName = tools[0].Function.Name
+		}
+
+		if onlyOneToolName != "" {
+			req.ToolChoice = model.ToolChoice{
+				Type: model.ToolTypeFunction,
+				Function: model.ToolChoiceFunction{
+					Name: onlyOneToolName,
+				},
+			}
+			return nil
+		}
+
+	}
+
+	req.ToolChoice = tc
+
+	return nil
+
 }
 
 func (cm *completionAPIChatModel) toLogProbs(probs *model.LogProbs) *schema.LogProbs {

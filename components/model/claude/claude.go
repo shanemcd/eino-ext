@@ -578,10 +578,6 @@ func populateToolChoice(params *anthropic.MessageNewParams, options *model.Optio
 		return nil
 	}
 
-	if len(options.AllowedTools) > 0 {
-		return fmt.Errorf("claude not support allowed tools")
-	}
-
 	switch *options.ToolChoice {
 	case schema.ToolChoiceForbidden:
 		ofNone := anthropic.NewToolChoiceNoneParam()
@@ -599,7 +595,19 @@ func populateToolChoice(params *anthropic.MessageNewParams, options *model.Optio
 	case schema.ToolChoiceForced:
 		if len(params.Tools) == 0 {
 			return fmt.Errorf("tool choice is forced but tool is not provided")
+		}
+
+		var onlyOneToolName = ""
+		if len(options.AllowedToolNames) > 0 {
+			if len(options.AllowedToolNames) > 1 {
+				return fmt.Errorf("only one allowed tool name can be configured")
+			}
+			onlyOneToolName = options.AllowedToolNames[0]
 		} else if len(params.Tools) == 1 {
+			onlyOneToolName = *params.Tools[0].GetName()
+		}
+
+		if onlyOneToolName != "" {
 			params.ToolChoice = anthropic.ToolChoiceParamOfTool(*params.Tools[0].GetName())
 		} else {
 			ofAny := &anthropic.ToolChoiceAnyParam{}
@@ -610,6 +618,7 @@ func populateToolChoice(params *anthropic.MessageNewParams, options *model.Optio
 				OfAny: ofAny,
 			}
 		}
+
 	default:
 		return fmt.Errorf("tool choice=%s not support", *options.ToolChoice)
 	}

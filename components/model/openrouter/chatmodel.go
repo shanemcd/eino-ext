@@ -195,7 +195,10 @@ func NewChatModel(ctx context.Context, config *Config) (*ChatModel, error) {
 
 func (cm *ChatModel) Generate(ctx context.Context, in []*schema.Message, opts ...model.Option) (outMsg *schema.Message, err error) {
 	ctx = callbacks.EnsureRunInfo(ctx, cm.GetType(), components.ComponentOfChatModel)
-	opt := cm.buildOptions(ctx, false, opts...)
+	opt, err := cm.buildOptions(ctx, false, opts...)
+	if err != nil {
+		return nil, err
+	}
 	out, err := cm.cli.Generate(ctx, in, opt...)
 	if err != nil {
 		return nil, err
@@ -205,7 +208,10 @@ func (cm *ChatModel) Generate(ctx context.Context, in []*schema.Message, opts ..
 
 func (cm *ChatModel) Stream(ctx context.Context, in []*schema.Message, opts ...model.Option) (outStream *schema.StreamReader[*schema.Message], err error) {
 	ctx = callbacks.EnsureRunInfo(ctx, cm.GetType(), components.ComponentOfChatModel)
-	opts = cm.buildOptions(ctx, true, opts...)
+	opts, err = cm.buildOptions(ctx, true, opts...)
+	if err != nil {
+		return nil, err
+	}
 	out, err := cm.cli.Stream(ctx, in, opts...)
 	if err != nil {
 		return nil, err
@@ -375,39 +381,48 @@ func (cm *ChatModel) buildResponseChunkMessageModifier() openai.ResponseChunkMes
 	}
 }
 
-func (cm *ChatModel) buildOptions(_ context.Context, isStream bool, opts ...model.Option) []model.Option {
+func (cm *ChatModel) buildOptions(_ context.Context, isStream bool, opts ...model.Option) ([]model.Option, error) {
 	specificOption := model.GetImplSpecificOptions(&openrouterOption{
 		models:    cm.models,
 		reasoning: cm.reasoning,
 		metadata:  cm.metadata,
 	}, opts...)
 
-	modelOption := model.GetCommonOptions(&model.Options{}, opts...)
+	modelOptions := model.GetCommonOptions(&model.Options{}, opts...)
 
 	options := make([]model.Option, 0, len(opts))
 
-	if modelOption.Model != nil {
-		options = append(options, model.WithModel(*modelOption.Model))
+	if modelOptions.Model != nil {
+		options = append(options, model.WithModel(*modelOptions.Model))
 	}
 
-	if modelOption.MaxTokens != nil {
-		options = append(options, model.WithMaxTokens(*modelOption.MaxTokens))
+	if modelOptions.MaxTokens != nil {
+		options = append(options, model.WithMaxTokens(*modelOptions.MaxTokens))
 	}
 
-	if modelOption.TopP != nil {
-		options = append(options, model.WithTopP(*modelOption.TopP))
+	if modelOptions.TopP != nil {
+		options = append(options, model.WithTopP(*modelOptions.TopP))
 	}
 
-	if len(modelOption.Stop) > 0 {
-		options = append(options, model.WithStop(modelOption.Stop))
+	if len(modelOptions.Stop) > 0 {
+		options = append(options, model.WithStop(modelOptions.Stop))
 	}
 
-	if len(modelOption.Tools) > 0 {
-		options = append(options, model.WithTools(modelOption.Tools))
+	if len(modelOptions.Tools) > 0 {
+		options = append(options, model.WithTools(modelOptions.Tools))
 	}
 
-	if modelOption.ToolChoice != nil {
-		options = append(options, model.WithToolChoice(*modelOption.ToolChoice))
+	if modelOptions.ToolChoice != nil {
+		if *modelOptions.ToolChoice == schema.ToolChoiceAllowed && len(modelOptions.AllowedToolNames) > 0 {
+			return nil, fmt.Errorf("tool_choice 'allowed' is not supported when allowed tool names are present")
+		}
+
+		if *modelOptions.ToolChoice == schema.ToolChoiceForced && len(modelOptions.AllowedToolNames) > 1 {
+			return nil, fmt.Errorf("only one allowed tool name can be configured for tool_choice 'forced'")
+		}
+		
+		options = append(options, model.WithToolChoice(*modelOptions.ToolChoice))
+
 	}
 
 	options = append(options, openai.WithRequestPayloadModifier(cm.buildRequestModifier(specificOption)))
@@ -417,7 +432,7 @@ func (cm *ChatModel) buildOptions(_ context.Context, isStream bool, opts ...mode
 		options = append(options, openai.WithResponseChunkMessageModifier(cm.buildResponseChunkMessageModifier()))
 	}
 
-	return options
+	return options, nil
 
 }
 

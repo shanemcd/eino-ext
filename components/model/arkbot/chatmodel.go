@@ -497,7 +497,68 @@ func (cm *ChatModel) genRequest(in []*schema.Message, options *fmodel.Options) (
 		}
 	}
 
+	err = populateToolChoice(req, options, tools)
+	if err != nil {
+		return req, err
+	}
+
 	return req, nil
+}
+
+type toolChoice string
+
+const (
+	toolChoiceNone     toolChoice = "none"
+	toolChoiceAuto     toolChoice = "auto"
+	toolChoiceRequired toolChoice = "required"
+)
+
+func populateToolChoice(req *model.BotChatCompletionRequest, options *fmodel.Options, tools []tool) error {
+	if options.ToolChoice == nil {
+		return nil
+	}
+
+	var tc toolChoice
+	switch *options.ToolChoice {
+	case schema.ToolChoiceForbidden:
+		tc = toolChoiceNone
+	case schema.ToolChoiceAllowed:
+		tc = toolChoiceAuto
+	case schema.ToolChoiceForced:
+		tc = toolChoiceRequired
+	default:
+		tc = toolChoiceAuto
+	}
+
+	if tc == toolChoiceRequired && len(tools) == 0 {
+		return fmt.Errorf("too many tool choices specified")
+	}
+
+	if tc == toolChoiceRequired {
+		var onlyOneToolName string
+		if len(options.AllowedToolNames) > 0 {
+			if len(options.AllowedToolNames) > 1 {
+				return fmt.Errorf("only one allowed tool name can be configured")
+			}
+			onlyOneToolName = options.AllowedToolNames[0]
+		} else if len(tools) == 1 && tools[0].Function != nil {
+			onlyOneToolName = tools[0].Function.Name
+		}
+		if onlyOneToolName != "" {
+			req.ToolChoice = model.ToolChoice{
+				Type: model.ToolTypeFunction,
+				Function: model.ToolChoiceFunction{
+					Name: onlyOneToolName,
+				},
+			}
+			return nil
+		}
+
+	}
+	req.ToolChoice = tc
+
+	return nil
+
 }
 
 func toLogProbs(probs *model.LogProbs) *schema.LogProbs {

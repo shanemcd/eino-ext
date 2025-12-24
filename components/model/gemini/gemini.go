@@ -364,19 +364,16 @@ func populateToolChoice(m *genai.GenerateContentConfig, options *model.Options) 
 	if options.ToolChoice == nil {
 		return nil
 	}
-	if len(m.Tools) == 0 && len(options.AllowedTools) > 0 {
-		return fmt.Errorf("tools must be provided when allowed_tools is set")
-	}
 
 	validateAllowedTools := func() error {
-		if len(options.AllowedTools) > 0 {
+		if len(options.AllowedToolNames) > 0 {
 			toolsMap := make(map[string]bool)
 			for _, tools := range m.Tools {
 				for _, functions := range tools.FunctionDeclarations {
 					toolsMap[functions.Name] = true
 				}
 			}
-			for _, name := range options.AllowedTools {
+			for _, name := range options.AllowedToolNames {
 				if !toolsMap[name] {
 					return fmt.Errorf("allowed tool %s not found in request tools", name)
 				}
@@ -391,13 +388,13 @@ func populateToolChoice(m *genai.GenerateContentConfig, options *model.Options) 
 		}}
 		return nil
 	case schema.ToolChoiceAllowed:
-		if len(options.AllowedTools) > 0 {
+		if len(options.AllowedToolNames) > 0 {
 			if err := validateAllowedTools(); err != nil {
 				return err
 			}
 			m.ToolConfig = &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
 				Mode:                 genai.FunctionCallingConfigModeValidated,
-				AllowedFunctionNames: options.AllowedTools,
+				AllowedFunctionNames: options.AllowedToolNames,
 			}}
 			return nil
 		}
@@ -410,14 +407,15 @@ func populateToolChoice(m *genai.GenerateContentConfig, options *model.Options) 
 			return fmt.Errorf("tool choice is forced but tool is not provided")
 		}
 
-		if len(options.AllowedTools) > 0 {
+		if len(options.AllowedToolNames) > 0 {
 			if err := validateAllowedTools(); err != nil {
 				return err
 			}
 		}
+		
 		m.ToolConfig = &genai.ToolConfig{FunctionCallingConfig: &genai.FunctionCallingConfig{
 			Mode:                 genai.FunctionCallingConfigModeAny,
-			AllowedFunctionNames: options.AllowedTools,
+			AllowedFunctionNames: options.AllowedToolNames,
 		}}
 		return nil
 	default:

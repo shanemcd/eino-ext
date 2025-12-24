@@ -606,16 +606,28 @@ func (cm *ChatModel) generateRequest(_ context.Context, in []*schema.Message, op
 		case schema.ToolChoiceForced:
 			if len(req.Tools) == 0 {
 				return nil, nil, fmt.Errorf("tool choice is forced but tool is not provided")
-			} else if len(req.Tools) > 1 {
-				req.ToolChoice = toolChoiceRequired
-			} else {
+			}
+
+			onlyOneToolName := ""
+			if len(options.AllowedToolNames) > 0 {
+				if len(options.AllowedToolNames) > 1 {
+					return nil, nil, fmt.Errorf("only one allowed tool name can be configured")
+				}
+				onlyOneToolName = options.AllowedToolNames[0]
+			} else if len(req.Tools) == 1 {
+				onlyOneToolName = req.Tools[0].Function.Name
+			}
+			if onlyOneToolName != "" {
 				req.ToolChoice = deepseek.ToolChoice{
-					Type: req.Tools[0].Type,
+					Type: "function",
 					Function: deepseek.ToolChoiceFunction{
-						Name: req.Tools[0].Function.Name,
+						Name: onlyOneToolName,
 					},
 				}
+			} else {
+				req.ToolChoice = toolChoiceRequired
 			}
+
 		default:
 			return nil, nil, fmt.Errorf("tool choice=%s not support", *options.ToolChoice)
 		}

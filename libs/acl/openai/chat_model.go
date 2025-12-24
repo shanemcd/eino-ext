@@ -979,17 +979,13 @@ func populateToolChoice(req *openai.ChatCompletionRequest, options *model.Option
 		return nil
 	}
 
-	if len(req.Tools) == 0 && len(options.AllowedTools) > 0 {
-		return fmt.Errorf("tools must be provided when allowed_tools is set")
-	}
-
 	validateAllowedTools := func() error {
-		if len(options.AllowedTools) > 0 {
+		if len(options.AllowedToolNames) > 0 {
 			toolsMap := make(map[string]bool)
 			for _, t := range req.Tools {
 				toolsMap[t.Function.Name] = true
 			}
-			for _, name := range options.AllowedTools {
+			for _, name := range options.AllowedToolNames {
 				if !toolsMap[name] {
 					return fmt.Errorf("allowed tool %s not found in request tools", name)
 				}
@@ -999,8 +995,8 @@ func populateToolChoice(req *openai.ChatCompletionRequest, options *model.Option
 	}
 
 	buildToolChoices := func() []openai.ToolChoice {
-		choices := make([]openai.ToolChoice, len(options.AllowedTools))
-		for i, n := range options.AllowedTools {
+		choices := make([]openai.ToolChoice, len(options.AllowedToolNames))
+		for i, n := range options.AllowedToolNames {
 			choices[i] = openai.ToolChoice{
 				Type: openai.ToolTypeFunction,
 				Function: openai.ToolFunction{
@@ -1016,7 +1012,7 @@ func populateToolChoice(req *openai.ChatCompletionRequest, options *model.Option
 		req.ToolChoice = toolChoiceNone
 		return nil
 	case schema.ToolChoiceAllowed:
-		if len(options.AllowedTools) > 0 {
+		if len(options.AllowedToolNames) > 0 {
 			if err := validateAllowedTools(); err != nil {
 				return err
 			}
@@ -1033,20 +1029,26 @@ func populateToolChoice(req *openai.ChatCompletionRequest, options *model.Option
 			return fmt.Errorf("tool_choice is forced but no tools are provided")
 		}
 
-		if len(req.Tools) == 1 && len(options.AllowedTools) == 0 {
+		err := validateAllowedTools()
+		if err != nil {
+			return err
+		}
+
+		var onlyOneToolName string
+		if len(options.AllowedToolNames) == 1 {
+			onlyOneToolName = options.AllowedToolNames[0]
+		} else if len(req.Tools) == 1 {
+			onlyOneToolName = req.Tools[0].Function.Name
+		}
+
+		if onlyOneToolName != "" {
 			req.ToolChoice = openai.ToolChoice{
 				Type: openai.ToolTypeFunction,
 				Function: openai.ToolFunction{
 					Name: req.Tools[0].Function.Name,
 				},
 			}
-			return nil
-		}
-		
-		if len(options.AllowedTools) > 0 {
-			if err := validateAllowedTools(); err != nil {
-				return err
-			}
+		} else if len(options.AllowedToolNames) > 1 {
 			req.ToolChoice = allowedTools{
 				Mode:  toolChoiceRequired,
 				Tools: buildToolChoices(),
@@ -1054,6 +1056,7 @@ func populateToolChoice(req *openai.ChatCompletionRequest, options *model.Option
 		} else {
 			req.ToolChoice = toolChoiceRequired
 		}
+
 		return nil
 	default:
 		return fmt.Errorf("unsupported tool_choice: %s", *options.ToolChoice)
